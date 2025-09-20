@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { storage } from "../firebase";
-import { ref, uploadBytes, listAll, getDownloadURL } from "firebase/storage";
+import { supabase } from "../lib/supabase";
 import { v4 as uuidv4 } from "uuid";
 import Swal from "sweetalert2";
 
@@ -15,21 +14,31 @@ function UploadImage() {
   }, []);
 
   const listImages = () => {
-    const imageListRef = ref(storage, "images/");
-    listAll(imageListRef)
-      .then((response) => {
-        const imagePromises = response.items.map((item) => getDownloadURL(item));
-        Promise.all(imagePromises)
-          .then((urls) => {
-            setImageList(urls);
-          })
-          .catch((error) => {
-            console.log(error);
+    const fetchImages = async () => {
+      try {
+        const { data, error } = await supabase.storage
+          .from('images')
+          .list('', {
+            limit: 100,
+            offset: 0,
           });
-      })
-      .catch((error) => {
-        console.log(error);
-      });
+
+        if (error) throw error;
+
+        const imageUrls = data.map(file => {
+          const { data: urlData } = supabase.storage
+            .from('images')
+            .getPublicUrl(file.name);
+          return urlData.publicUrl;
+        });
+
+        setImageList(imageUrls);
+      } catch (error) {
+        console.error('Error fetching images:', error);
+      }
+    };
+
+    fetchImages();
   };
 
   const uploadImage = () => {
@@ -67,32 +76,48 @@ function UploadImage() {
       return;
     }
 
-    const imageRef = ref(storage, `images/${imageUpload.name}-${uuidv4()}`);
-    uploadBytes(imageRef, imageUpload)
-      .then((snapshot) => {
-        getDownloadURL(snapshot.ref)
-          .then((url) => {
-            setImageList((prev) => [...prev, url]);
-            localStorage.setItem("uploadedImagesCount", uploadedImagesCount + 1);
-            localStorage.setItem("lastUploadDate", new Date().toISOString());
+    const uploadFile = async () => {
+      try {
+        const fileName = `${imageUpload.name}-${uuidv4()}`;
+        
+        const { data, error } = await supabase.storage
+          .from('images')
+          .upload(fileName, imageUpload);
 
-            Swal.fire({
-              icon: "success",
-              title: "Success!",
-              text: "Your image has been successfully uploaded.",
-			  customClass: {
-				container: "sweet-alert-container",
-			},
-            });
-          })
-          .catch((error) => {
-            console.log(error);
-          });
+        if (error) throw error;
+
+        const { data: urlData } = supabase.storage
+          .from('images')
+          .getPublicUrl(fileName);
+
+        setImageList((prev) => [...prev, urlData.publicUrl]);
+        localStorage.setItem("uploadedImagesCount", uploadedImagesCount + 1);
+        localStorage.setItem("lastUploadDate", new Date().toISOString());
+
+        Swal.fire({
+          icon: "success",
+          title: "Success!",
+          text: "Your image has been successfully uploaded.",
+          customClass: {
+            container: "sweet-alert-container",
+          },
+        });
+        
         setImageUpload(null);
-      })
-      .catch((error) => {
-        console.log(error);
-      });
+      } catch (error) {
+        console.error('Error uploading image:', error);
+        Swal.fire({
+          icon: "error",
+          title: "Upload Failed",
+          text: "Failed to upload image. Please try again.",
+          customClass: {
+            container: "sweet-alert-container",
+          },
+        });
+      }
+    };
+
+    uploadFile();
   };
 
   const handleImageChange = (event) => {

@@ -4,7 +4,7 @@ import "slick-carousel/slick/slick.css"
 import "slick-carousel/slick/slick-theme.css"
 import ButtonSend from "../components/ButtonSend"
 import ButtonRequest from "../components/ButtonRequest"
-import { getStorage, ref, listAll, getDownloadURL } from "firebase/storage"
+import { supabase } from "../lib/supabase"
 import Modal from "@mui/material/Modal"
 import { Box, IconButton } from "@mui/material"
 import CloseIcon from "@mui/icons-material/Close"
@@ -20,29 +20,33 @@ const Carousel = () => {
 		config: { duration: 300 }, // Adjust the duration as needed
 	})
 
-	// Fungsi untuk mengambil daftar gambar dari Firebase Storage
-	const fetchImagesFromFirebase = async () => {
+	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
+	const fetchImagesFromSupabase = async () => {
 		try {
-			const storage = getStorage() // Mendapatkan referensi Firebase Storage
-			const storageRef = ref(storage, "GambarAman/") // Menggunakan ref dengan storage
+			const { data, error } = await supabase.storage
+				.from('gallery')
+				.list('', {
+					limit: 100,
+					offset: 0,
+				});
 
-			const imagesList = await listAll(storageRef) // Menggunakan listAll untuk mendapatkan daftar gambar
+			if (error) throw error;
 
-			const imageURLs = await Promise.all(
-				imagesList.items.map(async (item) => {
-					const url = await getDownloadURL(item) // Menggunakan getDownloadURL untuk mendapatkan URL gambar
-					return url
-				}),
-			)
+			const imageURLs = data.map(file => {
+				const { data: urlData } = supabase.storage
+					.from('gallery')
+					.getPublicUrl(file.name);
+				return urlData.publicUrl;
+			});
 
 			setImages(imageURLs)
 		} catch (error) {
-			console.error("Error fetching images from Firebase Storage:", error)
+			console.error("Error fetching images from Supabase Storage:", error)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromFirebase()
+		fetchImagesFromSupabase()
 	}, [])
 
 	const settings = {

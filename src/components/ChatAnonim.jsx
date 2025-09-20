@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { addDoc, collection, query, orderBy, onSnapshot, getDocs } from "firebase/firestore";
-import { db, auth } from "../firebase";
+import { supabase } from "../lib/supabase";
 import axios from "axios";
 import Swal from "sweetalert2";
 
@@ -11,14 +10,17 @@ function Chat() {
   const [userIp, setUserIp] = useState("");
   const [messageCount, setMessageCount] = useState(0);
 
-  const chatsCollectionRef = collection(db, "chats");
   const messagesEndRef = useRef(null);
 
-  // Fungsi untuk mengambil daftar alamat IP yang diblokir dari Firebase Firestore
+  // Fungsi untuk mengambil daftar alamat IP yang diblokir dari Supabase
   const fetchBlockedIPs = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, "blacklist_ips"));
-      const blockedIPs = querySnapshot.docs.map((doc) => doc.data().ipAddress);
+      const { data, error } = await supabase
+        .from('blacklist_ips')
+        .select('ip_address');
+      
+      if (error) throw error;
+      const blockedIPs = data.map((item) => item.ip_address);
       return blockedIPs;
     } catch (error) {
       console.error("Gagal mengambil daftar IP yang diblokir:", error);
@@ -27,24 +29,35 @@ function Chat() {
   }
 
   useEffect(() => {
-    // Memuat pesan dari Firestore dan mengatur langganan untuk memantau perubahan
-    const queryChats = query(chatsCollectionRef, orderBy("timestamp"));
-    const unsubscribe = onSnapshot(queryChats, (snapshot) => {
-      const newMessages = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          ...data,
-          userIp: data.userIp,
-        };
-      });
-      setMessages(newMessages);
+    // Memuat pesan dari Supabase dan mengatur langganan untuk memantau perubahan
+    const fetchMessages = async () => {
+      const { data, error } = await supabase
+        .from('chats')
+        .select('*')
+        .order('timestamp', { ascending: true });
+      
+      if (error) {
+        console.error('Error fetching messages:', error);
+        return;
+      }
+      
+      setMessages(data || []);
       if (shouldScrollToBottom) {
         scrollToBottom();
       }
-    });
+    };
+
+    const subscription = supabase
+      .channel('chats')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
+        fetchMessages();
+      })
+      .subscribe();
+
+    fetchMessages();
 
     return () => {
-      unsubscribe(); // Membersihkan langganan saat komponen tidak lagi digunakan
+      subscription.unsubscribe(); // Membersihkan langganan saat komponen tidak lagi digunakan
     }
   }, [shouldScrollToBottom]);
 
@@ -133,7 +146,7 @@ function Chat() {
         return;
       }
 
-      const senderImageURL = auth.currentUser?.photoURL || "/AnonimUser.png";
+      const senderImageURL = "/AnonimUser.png";
       const trimmedMessage = message.trim().substring(0, 60);
       const userIpAddress = userIp;
 
@@ -153,15 +166,20 @@ function Chat() {
       localStorage.setItem(userIpAddress, updatedSentMessageCount.toString());
       setMessageCount(updatedSentMessageCount);
 
-      // Menambahkan pesan ke Firestore
-      await addDoc(chatsCollectionRef, {
+      // Menambahkan pesan ke Supabase
+      const { error } = await supabase
+        .from('chats')
+        .insert([{
         message: trimmedMessage,
-        sender: {
-          image: senderImageURL,
-        },
+        sender_image: senderImageURL,
         timestamp: new Date(),
-        userIp: userIp,
-      });
+        user_ip: userIp,
+      }]);
+
+      if (error) {
+        console.error('Error sending message:', error);
+        return;
+      }
 
       setMessage(""); // Menghapus pesan setelah mengirim
       setTimeout(() => {
@@ -186,7 +204,7 @@ function Chat() {
       <div className="mt-5" id="KotakPesan" style={{ overflowY: "auto" }}>
         {messages.map((msg, index) => (
           <div key={index} className="flex items-start text-sm py-[1%]">
-            <img src={msg.sender.image} alt="User Profile" className="h-7 w-7 mr-2 " />
+            <img src={msg.sender_image || "/AnonimUser.png"} alt="User Profile" className="h-7 w-7 mr-2 " />
             <div className="relative top-[0.30rem]">{msg.message}</div>
           </div>
         ))}
